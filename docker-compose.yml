@@ -1,0 +1,23 @@
+services:
+  doubao-asr-api:
+    container_name: doubao-asr-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8836:8000"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DOUBAO_ASR_HOST: 0.0.0.0
+      DOUBAO_ASR_PORT: 8000
+      DOUBAO_ASR_CREDENTIAL_PATH: /app/credentials.json
+      # DOUBAO_ASR_API_KEY: sk-your-key
+    volumes:
+      - ./credentials.json:/app/credentials.json:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
