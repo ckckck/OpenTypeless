@@ -4,13 +4,14 @@
 
 当前支持两种 ASR 后端：
 
-1. **IME 协议模式（原有方式）**：通过 `doubaoime-asr` 连接豆包输入法 ASR 协议。
-2. **官方 API 模式**：支持官方录音文件识别 **标准版** 与 **极速版**（App Key + Access Key）。
+1. **豆包 ASR to API 模式**：通过 `doubaoime-asr` 将豆包输入法 ASR 能力封装为 OpenAI 兼容转写接口。
+2. **官方 API 方式**：接入官方录音文件识别，支持 **标准版** 与 **极速版**（App Key + Access Key）。
 
 ## 项目目的
 
 1. 提供豆包 ASR to API 功能（OpenAI 兼容），可通过 Docker 一键启动。
-2. 提供一份参考修正提示词（见 `推荐提示词.md`），可配合 Spokenly 对语音转写结果做稳定整理与纠错。
+2. 已增加官方 API 模式，在同一套 OpenAI 兼容接口下支持标准版与极速版切换。
+3. 提供一份参考修正提示词（见 `推荐提示词.md`），可配合 Spokenly 对语音转写结果做稳定整理与纠错。
 
 ## API 服务说明
 
@@ -20,12 +21,16 @@
 - 模型列表：`GET /v1/models`
 - 健康检查：`GET /health`
 
+`POST /v1/audio/transcriptions` 兼容 OpenAI 常用字段，并额外支持：
+
+- `audio_url`（可选）：当使用官方标准版时可传音频 URL，服务端会优先按 URL 识别。
+
 ## 后端选择（重点）
 
 你可以通过 `model` 参数在一次请求内选择后端：
 
-- `doubao-asr`：IME 协议模式（原有）
-- `doubao-asr-official`：官方 API 模式（具体标准/极速由 `DOUBAO_ASR_OFFICIAL_MODE` 决定）
+- `doubao-asr`：豆包 ASR to API 模式
+- `doubao-asr-official`：官方 API 方式（具体标准/极速由 `DOUBAO_ASR_OFFICIAL_MODE` 决定）
 - `doubao-asr-official-standard`：官方标准版
 - `doubao-asr-official-flash`：官方极速版
 
@@ -34,7 +39,7 @@
 - `DOUBAO_ASR_DEFAULT_BACKEND=ime`
 - `DOUBAO_ASR_DEFAULT_BACKEND=official`
 
-说明：如果传入了上述两个模型之一，会优先按模型选择；否则回落到 `DOUBAO_ASR_DEFAULT_BACKEND`。
+说明：如果传入了上述模型 ID，会优先按模型选择；否则回落到 `DOUBAO_ASR_DEFAULT_BACKEND`。
 
 ## 官方 API 模式配置
 
@@ -88,7 +93,7 @@ docker compose down
 
 - URL：`http://127.0.0.1:8836`（不要手动加 `/v1`）
 - 模型：
-  - `doubao-asr`（IME）
+  - `doubao-asr`（豆包 ASR to API）
   - `doubao-asr-official`（官方，按 `DOUBAO_ASR_OFFICIAL_MODE` 选择标准/极速）
   - `doubao-asr-official-standard`（官方标准版）
   - `doubao-asr-official-flash`（官方极速版）
@@ -137,7 +142,7 @@ docker compose up -d --build
 
 ```yaml
 # 默认后端（ime 或 official）
-DOUBAO_ASR_DEFAULT_BACKEND: ime
+DOUBAO_ASR_DEFAULT_BACKEND: official
 
 # 仅官方 API 模式需要
 # DOUBAO_ASR_OFFICIAL_APP_KEY: your-app-key
@@ -155,54 +160,35 @@ DOUBAO_ASR_DEFAULT_BACKEND: ime
 
 该提示词重点覆盖以下场景：
 
-1. **局部自我修正，不丢上下文**  
-   只修正当前片段，同时保留前后无关内容。  
-   预期输入：
-   ```text
-   我明天上午十点开会，下午去银行，不对，下午去医院拿报告，晚上回家写周报
-   ```
-   预期输出：
-   ```text
-   我明天上午十点开会，下午去医院拿报告，晚上回家写周报
-   ```
+1. **纯复述修正，不做内容扩写**  
+   仅做最小修正：去口吃/重复/语气词、纠错别字和标点、处理改口（如“不对/不是...是...”）。
+2. **热词表纠错**  
+   支持按热词表做发音近似替换，例如 `cloud code -> Claude Code`、`千问 -> Qwen`。
+3. **枚举结构化**  
+   将“第一、第二、第三”整理为 `1. 2. 3.` 数字列表，提升可读性。
+4. **中文数字统一阿拉伯数字**  
+   例如“三点五 -> 3.5”“一百二十 -> 120”，并在版本号、数量、编号、比分、手机号等场景统一数字格式。
 
-2. **多事项结构化输出**  
-   识别“第一/第二/第三”等并列项时，转换为阿拉伯数字列表，且每项换行，输出更清晰。  
-   预期输入：
-   ```text
-   我一会儿出门要做三件事，第一去超市买牛奶和鸡蛋，第二去取快递，第三给妈妈打电话，完事回家
-   ```
-   预期输出：
-   ```text
-   我一会儿出门要做三件事
-   1. 去超市买牛奶和鸡蛋
-   2. 去取快递
-   3. 给妈妈打电话
-   完事回家
-   ```
+示例（与当前提示词保持一致）：
 
-3. **热词驱动纠错**  
-   对专有名词（如 `DeepSeek`）进行发音近似纠错，减少 ASR 误识别。  
-   预期输入：
-   ```text
-   转写文本：我把模型切到 Deep Sick R1，再比较下 Qwen 和 Deep Seat
-   热词表：DeepSeek, DeepSeek-R1, Qwen
-   ```
-   预期输出：
-   ```text
-   我把模型切到 DeepSeek-R1，再比较下 Qwen 和 DeepSeek
-   ```
+```text
+用户：帮我用cloud code写一个脚本
+你：帮我用 Claude Code 写一个脚本
 
-4. **保留口语风格、删除无效语气词**  
-   尽量保留用户说话习惯，同时清理“嗯/啊”等无实义语气词，提升可读性。  
-   预期输入：
-   ```text
-   嗯 这个方案啊 我觉得吧 先小范围试一下 然后再全量 这样更稳
-   ```
-   预期输出：
-   ```text
-   这个方案我觉得先小范围试一下，然后再全量，这样更稳
-   ```
+用户：GPT四点五的价格是每一百万token二十美元
+你：GPT 4.5 的价格是每 100 万 token 20 美元
+
+用户：我的手机号是一三八零零一三八零零零
+你：我的手机号是 13800138000
+
+用户：我一会儿出门要做三件事第一去超市买菜第二去银行取钱第三去接孩子放学然后晚上还得做饭
+你：我一会儿出门要做三件事：
+1. 去超市买菜
+2. 去银行取钱
+3. 去接孩子放学
+
+然后晚上还得做饭
+```
 
 ## License
 
